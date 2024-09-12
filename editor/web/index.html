@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <!-- Base href for web app -->
+  <base href="$FLUTTER_BASE_HREF">
+
+  <meta charset="UTF-8">
+  <meta content="IE=Edge" http-equiv="X-UA-Compatible">
+  <meta name="description" content="A new Flutter project.">
+
+  <!-- iOS meta tags & icons -->
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
+  <meta name="apple-mobile-web-app-title" content="editor">
+  <link rel="apple-touch-icon" href="icons/Icon-192.png">
+
+  <!-- Favicon -->
+  <link rel="icon" type="image/png" href="favicon.png"/>
+
+  <title>Editor</title>
+  <link rel="manifest" href="manifest.json">
+</head>
+<body>
+  <!-- Load Flutter bootstrap script -->
+  <script src="flutter_bootstrap.js" async></script>
+
+  <!-- Add the script for FFmpeg -->
+  <script type="module">
+    import { createFFmpeg, fetchFile } from 'https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js';
+
+    const ffmpeg = createFFmpeg({ log: true });
+
+    // Function to load FFmpeg
+    window.loadFFmpeg = async function() {
+      if (!ffmpeg.isLoaded()) {
+        await ffmpeg.load();
+        console.log("FFmpeg loaded successfully");
+      }
+    };
+
+    async function processVideo(inputFile, commandArgs, outputType = 'video/mp4') {
+      await window.loadFFmpeg();
+      const inputFilename = `input_${Date.now()}.mp4`;
+      const outputFilename = `output_${Date.now()}.mp4`;
+
+      // Write input file to the virtual file system
+      ffmpeg.FS('writeFile', inputFilename, await fetchFile(inputFile));
+      await ffmpeg.run(...commandArgs);
+
+      // Read and return the output file URL
+      const data = ffmpeg.FS('readFile', outputFilename);
+      const blob = new Blob([data.buffer], { type: outputType });
+      const outputURL = URL.createObjectURL(blob);
+
+      setTimeout(() => URL.revokeObjectURL(outputURL), 60000); // Clean up URL after 1 min
+      return outputURL;
+    }
+
+    async function cropVideo(inputFile, width, height, x, y) {
+      const commandArgs = ['-i', inputFile, '-vf', `crop=${width}:${height}:${x}:${y}`, `cropped_${Date.now()}.mp4`];
+      return await processVideo(inputFile, commandArgs);
+    }
+
+    async function addTextToVideo(inputFile, text, x, y) {
+      const commandArgs = ['-i', inputFile, '-vf', `drawtext=text='${text}':x=${x}:y=${y}:fontsize=24:fontcolor=white`, `text_${Date.now()}.mp4`];
+      return await processVideo(inputFile, commandArgs);
+    }
+
+    async function overlayImageOnVideo(inputFile, imageFile, x, y) {
+      await window.loadFFmpeg();
+      const inputFilename = `input_${Date.now()}.mp4`;
+      const overlayFilename = `overlay_${Date.now()}.png`;
+      const outputFilename = `overlayed_${Date.now()}.mp4`;
+
+      ffmpeg.FS('writeFile', inputFilename, await fetchFile(inputFile));
+      ffmpeg.FS('writeFile', overlayFilename, await fetchFile(imageFile));
+
+      const commandArgs = ['-i', inputFilename, '-i', overlayFilename, '-filter_complex', `overlay=${x}:${y}`, outputFilename];
+      return await processVideo(inputFile, commandArgs);
+    }
+
+    async function adjustAudioVolume(inputFile, volume) {
+      const commandArgs = ['-i', inputFile, '-af', `volume=${volume}`, `audio_adjusted_${Date.now()}.mp4`];
+      return await processVideo(inputFile, commandArgs);
+    }
+
+    async function extractFramesFromVideo(inputFile, fps = 1) {
+      await window.loadFFmpeg();
+      const inputFilename = `input_${Date.now()}.mp4`;
+      const outputPattern = `frame_%03d.png`;
+
+      ffmpeg.FS('writeFile', inputFilename, await fetchFile(inputFile));
+
+      // Run ffmpeg to extract frames
+      const commandArgs = ['-i', inputFilename, '-vf', `fps=${fps}`, outputPattern];
+      await ffmpeg.run(...commandArgs);
+
+      // Collect and return generated frames
+      const frameFiles = [];
+      let frameIndex = 1;
+      while (true) {
+        const frameFilename = `frame_${String(frameIndex).padStart(3, '0')}.png`;
+        try {
+          const frameData = ffmpeg.FS('readFile', frameFilename);
+          const frameBlob = new Blob([frameData.buffer], { type: 'image/png' });
+          const frameURL = URL.createObjectURL(frameBlob);
+          frameFiles.push(frameURL);
+          setTimeout(() => URL.revokeObjectURL(frameURL), 60000); // Clean up URL after 1 min
+          frameIndex++;
+        } catch (err) {
+          // Exit the loop once no more frames are found
+          break;
+        }
+      }
+
+      return frameFiles;
+    }
+
+    // Expose functions to the global scope
+    window.ffmpegInterop = {
+      cropVideo,
+      addTextToVideo,
+      overlayImageOnVideo,
+      adjustAudioVolume,
+      extractFramesFromVideo
+    };
+  </script>
+</body>
+</html>
